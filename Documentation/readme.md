@@ -1,1 +1,1 @@
-Decumentation details about project
+Documentation details about project
