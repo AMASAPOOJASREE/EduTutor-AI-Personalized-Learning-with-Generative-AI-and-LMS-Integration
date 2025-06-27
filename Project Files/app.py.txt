@@ -1,0 +1,2415 @@
+import subprocess
+import sys
+
+def install_requirements():
+    """Install required packages if not available"""
+    required_packages = [
+        'torch',
+        'transformers',
+        'huggingface-hub',
+        'gradio',
+        'sympy',
+        'numpy'
+    ]
+    
+    for package in required_packages:
+        try:
+            __import__(package)
+        except ImportError:
+            print(f"Installing {package}...")
+            subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# Install requirements before importing
+install_requirements()
+
+import gradio as gr
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+from huggingface_hub import login
+import json
+import re
+from datetime import datetime, timedelta
+import logging
+from typing import List, Dict, Any
+import warnings
+import os
+import gc
+import random
+import socket
+import sympy as sp
+from sympy import symbols, Eq, solve, simplify, expand, factor
+
+warnings.filterwarnings('ignore')
+
+print("🔐 Setting up Hugging Face authentication...")
+try:
+    from google.colab import userdata
+    HF_TOKEN = userdata.get('HF_TOKEN')
+    if HF_TOKEN:
+        print("✅ Token loaded from Colab secrets")
+        login(token=HF_TOKEN)
+        print("✅ Hugging Face authentication successful!")
+    else:
+        print("⚠️ No HF_TOKEN found in secrets - using public models only")
+        print("💡 Add HF_TOKEN to secrets for access to more models")
+
+except Exception as e:
+    print(f"⚠️ Authentication skipped: {str(e)}")
+    print("🔄 Continuing with public models...")
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+    gc.collect()
+    print(f"🔧 GPU Memory cleared and ready")
+    print(f"🎯 GPU Available: {torch.cuda.get_device_name(0)}")
+else:
+    print("⚠️ No GPU available, using CPU (will be slower)")
+
+class KnowledgeBase:
+    def __init__(self):
+        self.knowledge = {
+            "Biology": {
+                "photosynthesis": {
+                    "definition": "Photosynthesis is the process by which plants, algae, and some bacteria convert light energy (usually from sunlight) into chemical energy stored in glucose molecules.",
+                    "equation": "6CO₂ + 6H₂O + light energy → C₆H₁₂O₆ + 6O₂",
+                    "key_concepts": [
+                        "Light-dependent reactions (occur in thylakoids)",
+                        "Light-independent reactions (Calvin cycle in stroma)",
+                        "Chlorophyll absorption of light energy",
+                        "Production of glucose and oxygen",
+                        "Carbon dioxide fixation"
+                    ],
+                    "applications": "Essential for life on Earth as it produces oxygen and forms the base of food chains. Used in agriculture to optimize plant growth.",
+                    "detailed_explanation": "Photosynthesis occurs in two main stages: 1) Light reactions where chlorophyll absorbs sunlight and splits water molecules, releasing oxygen and creating ATP and NADPH. 2) Calvin cycle where CO₂ is fixed into glucose using the energy from ATP and NADPH."
+                },
+                "cell_biology": {
+                    "definition": "Cell biology is the study of cell structure, function, and behavior at the molecular level.",
+                    "key_concepts": ["Cell membrane", "Nucleus", "Organelles", "Cell division", "Metabolism"],
+                    "applications": "Foundation for medicine, biotechnology, and understanding life processes.",
+                    "detailed_explanation": "Cells are the basic units of life, containing specialized structures called organelles that carry out specific functions. The cell membrane controls what enters and exits the cell, while the nucleus contains genetic material."
+                },
+                "genetics": {
+                    "definition": "Genetics is the study of heredity and variation in living organisms through genes and DNA.",
+                    "key_concepts": ["DNA", "Genes", "Chromosomes", "Inheritance", "Mutations"],
+                    "applications": "Critical for medicine, agriculture, and evolutionary biology.",
+                    "detailed_explanation": "Genetics explains how traits are passed from parents to offspring through DNA, which contains genes that code for specific characteristics."
+                },
+                "respiration": {
+                    "definition": "Cellular respiration is the process by which cells break down glucose to release energy in the form of ATP.",
+                    "equation": "C₆H₁₂O₆ + 6O₂ → 6CO₂ + 6H₂O + ATP",
+                    "key_concepts": ["Glycolysis", "Krebs cycle", "Electron transport chain", "ATP production"],
+                    "applications": "Essential for all cellular activities and energy metabolism in living organisms.",
+                    "detailed_explanation": "Cellular respiration occurs in three stages: glycolysis (in cytoplasm), Krebs cycle (in mitochondria), and electron transport chain (in mitochondrial membrane)."
+                }
+            },
+            "Mathematics": {
+                "algebra": {
+                    "definition": "Algebra is a branch of mathematics that uses symbols (usually letters) to represent unknown numbers or variables in equations and expressions. It's the language of mathematics that allows us to solve problems systematically.",
+                    "key_concepts": [
+                        "Variables (like x, y, z) - symbols that represent unknown numbers",
+                        "Equations - mathematical statements showing two expressions are equal",
+                        "Functions - relationships between input and output values",
+                        "Polynomials - expressions with variables raised to whole number powers",
+                        "Factoring - breaking down expressions into simpler parts",
+                        "Linear equations - equations that graph as straight lines",
+                        "Quadratic equations - equations with variables squared"
+                    ],
+                    "applications": "Used everywhere: calculating loan payments, designing bridges, programming computers, analyzing business profits, predicting population growth, and solving engineering problems.",
+                    "detailed_explanation": "Algebra starts with simple equations like 2x + 5 = 15, where we find x = 5. It progresses to complex systems used in rocket science, economics, and artificial intelligence. The key is learning to manipulate symbols systematically to solve for unknowns.",
+                    "examples": [
+                        "Simple equation: 2x + 5 = 15 → x = 5",
+                        "Quadratic: x² - 5x + 6 = 0 → x = 2 or x = 3",
+                        "System: x + y = 10, x - y = 2 → x = 6, y = 4"
+                    ]
+                },
+                "calculus": {
+                    "definition": "Calculus is the mathematical study of continuous change, involving derivatives and integrals.",
+                    "key_concepts": ["Limits", "Derivatives", "Integrals", "Chain Rule", "Optimization"],
+                    "applications": "Essential for physics, engineering, economics, and any field involving rates of change.",
+                    "detailed_explanation": "Calculus has two main branches: differential calculus (studying rates of change) and integral calculus (studying accumulation of quantities). It's used to solve problems involving motion, optimization, and area calculations."
+                },
+                "geometry": {
+                    "definition": "Geometry is the branch of mathematics concerned with shapes, sizes, positions, and properties of space.",
+                    "key_concepts": ["Points", "Lines", "Angles", "Polygons", "Area", "Volume"],
+                    "applications": "Used in architecture, engineering, art, and computer graphics.",
+                    "detailed_explanation": "Geometry studies the properties and relationships of geometric shapes. It includes plane geometry (2D shapes) and solid geometry (3D shapes), with applications in design, construction, and spatial reasoning."
+                },
+                "statistics": {
+                    "definition": "Statistics is the science of collecting, analyzing, interpreting, and presenting data.",
+                    "key_concepts": ["Mean", "Median", "Mode", "Standard deviation", "Probability", "Hypothesis testing"],
+                    "applications": "Used in research, business analysis, quality control, and decision making.",
+                    "detailed_explanation": "Statistics helps us make sense of data and uncertainty. It provides tools to summarize data, identify patterns, and make informed decisions based on evidence."
+                }
+            },
+            "Physics": {
+                "mechanics": {
+                    "definition": "Mechanics is the branch of physics dealing with motion and forces acting on bodies.",
+                    "key_concepts": ["Force", "Motion", "Energy", "Momentum", "Newton's Laws"],
+                    "applications": "Foundation for engineering, robotics, and understanding everyday motion.",
+                    "detailed_explanation": "Mechanics studies how objects move and the forces that cause motion. Newton's three laws of motion form the foundation, explaining everything from falling objects to planetary orbits."
+                },
+                "thermodynamics": {
+                    "definition": "Thermodynamics is the study of heat, temperature, and energy transfer.",
+                    "key_concepts": ["Heat", "Temperature", "Entropy", "Laws of Thermodynamics"],
+                    "applications": "Critical for engines, refrigeration, and energy systems.",
+                    "detailed_explanation": "Thermodynamics governs energy transformations in all systems. The laws of thermodynamics describe energy conservation, entropy increase, and absolute zero temperature."
+                },
+                "electromagnetism": {
+                    "definition": "Electromagnetism studies electric and magnetic phenomena and their interactions.",
+                    "key_concepts": ["Electric Field", "Magnetic Field", "Current", "Voltage", "Maxwell's Equations"],
+                    "applications": "Basis for electronics, motors, generators, and communication systems.",
+                    "detailed_explanation": "Electromagnetism unifies electric and magnetic forces. Moving charges create magnetic fields, and changing magnetic fields create electric fields, forming the basis of electromagnetic waves."
+                },
+                "waves": {
+                    "definition": "Wave physics studies the behavior of waves, including sound, light, and water waves.",
+                    "key_concepts": ["Wavelength", "Frequency", "Amplitude", "Interference", "Diffraction"],
+                    "applications": "Essential for understanding sound, light, radio, and many technologies.",
+                    "detailed_explanation": "Waves transfer energy without transferring matter. They exhibit properties like reflection, refraction, and interference, which explain phenomena from music to colors."
+                }
+            },
+            "Chemistry": {
+                "organic_chemistry": {
+                    "definition": "Organic chemistry is the study of carbon-containing compounds and their reactions.",
+                    "key_concepts": ["Hydrocarbons", "Functional Groups", "Reactions", "Stereochemistry"],
+                    "applications": "Essential for pharmaceuticals, plastics, and biochemistry.",
+                    "detailed_explanation": "Organic chemistry focuses on carbon compounds, which form the basis of all living organisms. Carbon's ability to form four bonds creates diverse molecular structures."
+                },
+                "inorganic_chemistry": {
+                    "definition": "Inorganic chemistry deals with compounds that typically don't contain carbon-hydrogen bonds.",
+                    "key_concepts": ["Metals", "Salts", "Acids", "Bases", "Crystal Structures"],
+                    "applications": "Important for materials science, catalysis, and industrial processes.",
+                    "detailed_explanation": "Inorganic chemistry studies all elements and their compounds except organic molecules. It includes metals, minerals, salts, and many industrial chemicals."
+                },
+                "chemical_bonding": {
+                    "definition": "Chemical bonding explains how atoms combine to form molecules and compounds.",
+                    "key_concepts": ["Ionic bonds", "Covalent bonds", "Metallic bonds", "Intermolecular forces"],
+                    "applications": "Fundamental to understanding all chemical reactions and material properties.",
+                    "detailed_explanation": "Chemical bonds form when atoms share or transfer electrons to achieve stable electron configurations. Different types of bonding result in different properties."
+                }
+            }
+        }
+
+    def find_topic_match(self, query: str, subject: str) -> str:
+        """Find the best matching topic for a query"""
+        query_lower = query.lower()
+        subject_data = self.knowledge.get(subject, {})
+
+        for topic in subject_data.keys():
+            if topic in query_lower or any(word in query_lower for word in topic.split('_')):
+                return topic
+
+        keyword_mapping = {
+            "photosynthesis": ["photosynthesis", "plant", "chlorophyll", "light reaction", "calvin cycle", "glucose", "oxygen"],
+            "respiration": ["respiration", "cellular respiration", "breathing", "atp", "energy", "glucose breakdown"],
+            "genetics": ["genetics", "dna", "gene", "heredity", "inheritance", "chromosome", "mutation"],
+            "cell_biology": ["cell", "organelle", "nucleus", "membrane", "mitochondria"],
+            "algebra": ["algebra", "equation", "variable", "solve", "x", "linear", "quadratic", "polynomial"],
+            "calculus": ["calculus", "derivative", "integral", "limit", "differentiation", "integration"],
+            "geometry": ["geometry", "shape", "angle", "area", "volume", "triangle", "circle"],
+            "statistics": ["statistics", "data", "mean", "median", "probability", "standard deviation"],
+            "mechanics": ["mechanics", "force", "motion", "newton", "velocity", "acceleration"],
+            "thermodynamics": ["thermodynamics", "heat", "temperature", "energy", "entropy"],
+            "electromagnetism": ["electromagnetic", "electric", "magnetic", "current", "voltage"],
+            "waves": ["wave", "frequency", "wavelength", "sound", "light", "amplitude"],
+            "organic_chemistry": ["organic", "carbon", "hydrocarbon", "functional group"],
+            "inorganic_chemistry": ["inorganic", "metal", "salt", "acid", "base"],
+            "chemical_bonding": ["bond", "bonding", "ionic", "covalent", "electron", "atom"]
+        }
+
+        for topic, keywords in keyword_mapping.items():
+            if any(keyword in query_lower for keyword in keywords):
+                if topic in subject_data:
+                    return topic
+
+        return None
+
+    def get_accurate_info(self, query: str, subject: str) -> dict:
+        """Get accurate information about a topic"""
+        topic = self.find_topic_match(query, subject)
+
+        if topic and subject in self.knowledge and topic in self.knowledge[subject]:
+            return self.knowledge[subject][topic]
+
+        return {
+            "definition": f"This is an important concept in {subject} that requires systematic study and understanding.",
+            "key_concepts": ["Fundamental principles", "Core theories", "Practical applications"],
+            "applications": f"This concept has various applications in real-world scenarios and connects to other areas of {subject}.",
+            "detailed_explanation": f"To fully understand this concept in {subject}, it's important to study the underlying principles and see how they apply in practice."
+        }
+
+class MathSolver:
+    def __init__(self):
+        self.x, self.y, self.z = symbols('x y z')
+
+    def is_algebraic_equation(self, problem: str) -> bool:
+        """Check if the problem is an algebraic equation"""
+        patterns = [
+            r'\d*[a-z]\s*[\+\-\*\/]\s*\d+\s*=\s*\d+',
+            r'\d+\s*=\s*\d*[a-z]\s*[\+\-\*\/]\s*\d+',
+            r'solve.*for.*[a-z]',
+            r'find.*[a-z]',
+            r'[a-z]\s*=',
+            r'=.*[a-z]'
+        ]
+
+        problem_lower = problem.lower()
+        return any(re.search(pattern, problem_lower) for pattern in patterns)
+
+    def solve_algebraic_equation(self, problem: str) -> str:
+        """Solve algebraic equations step by step"""
+        try:
+            problem_clean = problem.lower().replace('find', '').replace('solve for', '').replace('solve', '').strip()
+
+            if '=' in problem_clean:
+                equation_part = problem_clean.split('find')[0] if 'find' in problem_clean else problem_clean
+                equation_part = equation_part.strip()
+
+                left_side, right_side = equation_part.split('=')
+                left_side = left_side.strip()
+                right_side = right_side.strip()
+
+                left_expr = sp.sympify(left_side)
+                right_expr = sp.sympify(right_side)
+
+                equation = Eq(left_expr, right_expr)
+                solution = solve(equation, self.x)
+
+                solution_text = f"**🔢 Mathematical Solution**\n\n"
+                solution_text += f"**Problem:** {problem}\n\n"
+                solution_text += f"**Equation:** {left_side} = {right_side}\n\n"
+                solution_text += f"**Step-by-Step Solution:**\n\n"
+
+                if left_expr.is_polynomial() and left_expr.as_poly().degree() == 1:
+                    solution_text += f"1. **Original equation:** {left_side} = {right_side}\n"
+
+                    poly = left_expr.as_poly()
+                    if poly:
+                        coeff = poly.coeff_monomial(self.x)
+                        const = poly.coeff_monomial(1)
+
+                        solution_text += f"2. **Subtract {const} from both sides:** {coeff}x = {right_expr - const}\n"
+                        solution_text += f"3. **Divide both sides by {coeff}:** x = {(right_expr - const)/coeff}\n"
+                        solution_text += f"4. **Simplify:** x = {solution[0]}\n\n"
+
+                solution_text += f"**Final Answer:** x = {solution[0]}\n\n"
+
+                verification = left_expr.subs(self.x, solution[0])
+                solution_text += f"**Verification:**\n"
+                solution_text += f"• Substitute x = {solution[0]} into original equation\n"
+                solution_text += f"• Left side: {left_side} = {verification}\n"
+                solution_text += f"• Right side: {right_side}\n"
+                solution_text += f"• Check: {verification} = {right_expr} ✓\n\n"
+
+                solution_text += f"**Key Mathematical Principles:**\n"
+                solution_text += f"• **Isolation:** Move all terms with the variable to one side\n"
+                solution_text += f"• **Inverse Operations:** Use opposite operations to solve\n"
+                solution_text += f"• **Balance:** Whatever you do to one side, do to the other\n"
+                solution_text += f"• **Verification:** Always check your answer in the original equation"
+
+                return solution_text
+
+        except Exception as e:
+            return self.handle_algebraic_error(problem, str(e))
+
+    def handle_algebraic_error(self, problem: str, error: str) -> str:
+        """Handle errors in algebraic equation solving"""
+        return f"""**🔢 Mathematical Analysis**
+
+**Problem:** {problem}
+
+**Solution Approach:**
+This appears to be an algebraic equation. Let me guide you through the general solution process:
+
+**For Linear Equations (like ax + b = c):**
+1. **Identify the equation:** Look for the variable (usually x) and constants
+2. **Isolate the variable term:** Move constants to the other side
+3. **Solve for the variable:** Divide by the coefficient
+4. **Check your answer:** Substitute back into the original equation
+
+**Example Process:**
+If you have 2x + 5 = 15:
+• Subtract 5 from both sides: 2x = 10
+• Divide both sides by 2: x = 5
+• Check: 2(5) + 5 = 15 ✓
+
+**For your specific problem:**
+Please ensure the equation is clearly written with an equals sign (=) and specify which variable to solve for.
+
+**Common Formats:**
+• 2x + 5 = 15 (solve for x)
+• 3y - 7 = 20 (solve for y)
+• ax + b = c (solve for x)
+"""
+
+    def solve_arithmetic_expression(self, problem: str) -> str:
+        """Solve arithmetic expressions with proper order of operations"""
+        try:
+            problem_clean = re.sub(r'[^\d+\-*/().\s]', '', problem)
+
+            if problem_clean.strip():
+                result = eval(problem_clean)
+
+                solution = f"**🧮 Arithmetic Solution**\n\n"
+                solution += f"**Problem:** {problem}\n\n"
+                solution += f"**Expression:** {problem_clean}\n\n"
+                solution += f"**Step-by-Step Solution:**\n"
+                solution += f"1. **Original Expression:** {problem_clean}\n"
+
+                if '(' in problem_clean:
+                    solution += f"2. **Step 1 - Parentheses:** Solve expressions inside parentheses first\n"
+
+                if '*' in problem_clean or '/' in problem_clean:
+                    solution += f"3. **Step 2 - Multiplication/Division:** Perform from left to right\n"
+
+                if '+' in problem_clean or '-' in problem_clean:
+                    solution += f"4. **Step 3 - Addition/Subtraction:** Perform from left to right\n"
+
+                solution += f"5. **Final Calculation:** {problem_clean} = {result}\n\n"
+                solution += f"**Final Answer:** {result}\n\n"
+
+                solution += f"**Key Mathematical Principles:**\n"
+                solution += f"• **PEMDAS/BODMAS:** Parentheses, Exponents, Multiplication/Division, Addition/Subtraction\n"
+                solution += f"• **Left to Right:** Operations of equal precedence are performed left to right\n"
+                solution += f"• **Accuracy:** Double-check each step to avoid calculation errors"
+
+                return solution
+
+        except Exception as e:
+            return f"**🧮 Arithmetic Analysis**\n\n**Problem:** {problem}\n\n**Solution Approach:**\n• Break the problem into smaller, manageable parts\n• Follow the order of operations (PEMDAS/BODMAS)\n• Work step by step and show all calculations\n• Verify your answer makes sense"
+
+class EduTutorAI:
+    def __init__(self):
+        self.model_name = "ibm-granite/granite-3.3-2b-instruct"
+        self.tokenizer = None
+        self.model = None
+        self.text_generator = None
+        self.conversation_history = []
+        self.knowledge_base = KnowledgeBase()
+        self.math_solver = MathSolver()
+
+    def load_model(self):
+        """Load IBM Granite model with text generation pipeline"""
+        try:
+            print("🤖 Loading EduTutor AI model...")
+            print("⚡ Using IBM Granite 3.3 2B Instruct model!")
+            print("⏳ Loading model...")
+
+            print("📝 Loading tokenizer...")
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+
+            print("🧠 Loading model...")
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_name,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                low_cpu_mem_usage=True,
+                device_map="auto" if torch.cuda.is_available() else None
+            )
+
+            print("🔧 Setting up text generation pipeline...")
+            self.text_generator = pipeline(
+                "text-generation",
+                model=self.model,
+                tokenizer=self.tokenizer,
+                torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+                device_map="auto" if torch.cuda.is_available() else None
+            )
+
+            print("✅ IBM Granite model loaded successfully!")
+            print("🎯 Ready for dynamic educational responses!")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error loading IBM Granite model: {str(e)}")
+            print("🔄 Trying GPT-2 fallback...")
+
+            try:
+                print("🔄 Loading GPT-2 fallback model...")
+                self.model_name = "gpt2"
+                self.tokenizer = AutoTokenizer.from_pretrained("gpt2")
+                self.model = AutoModelForCausalLM.from_pretrained("gpt2")
+
+                if self.tokenizer.pad_token is None:
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+
+                self.text_generator = pipeline(
+                    "text-generation",
+                    model=self.model,
+                    tokenizer=self.tokenizer
+                )
+
+                print("✅ GPT-2 fallback model loaded successfully!")
+                return True
+
+            except Exception as e2:
+                print(f"❌ Fallback also failed: {str(e2)}")
+                return False
+
+    def create_educational_prompt(self, user_input: str, subject: str, difficulty: str) -> str:
+        """Create a well-structured educational prompt for the AI model"""
+
+        prompt = f"""You are EduTutor AI, an expert educational assistant specializing in {subject}. You provide clear, accurate, and helpful explanations for students at the {difficulty} level.
+
+Student Question: {user_input}
+Subject: {subject}
+Difficulty Level: {difficulty}
+
+Please provide a comprehensive educational response that includes:
+1. A clear and accurate explanation
+2. Key concepts and definitions
+3. Step-by-step solutions for problems
+4. Real-world applications when relevant
+5. Study tips and learning guidance
+
+Your response should be educational, encouraging, and appropriate for a {difficulty} level student studying {subject}.
+
+Educational Response:"""
+
+        return prompt
+
+    def is_greeting(self, text: str) -> bool:
+        """Check if the input is a greeting"""
+        greetings = ['hello', 'hi', 'hey', 'good morning', 'good afternoon', 'good evening',
+                    'greetings', 'howdy', 'what\'s up', 'how are you', 'nice to meet you', 'hola']
+        text_lower = text.lower().strip()
+        return any(greeting in text_lower for greeting in greetings)
+
+    def is_math_problem(self, text: str) -> bool:
+        """Check if the input contains a math problem"""
+        if self.math_solver.is_algebraic_equation(text):
+            return True
+
+        math_indicators = ['+', '-', '*', '/', '(', ')', 'calculate', 'compute', 'solve']
+        return any(indicator in text.lower() for indicator in math_indicators)
+
+    def generate_dynamic_response(self, user_input: str, subject: str, difficulty: str) -> str:
+        """Generate dynamic response using the loaded AI model"""
+        try:
+            prompt = self.create_educational_prompt(user_input, subject, difficulty)
+
+            print(f"🤖 Generating dynamic response for: {user_input[:50]}...")
+
+            response = self.text_generator(
+                prompt,
+                max_new_tokens=500,
+                temperature=0.7,
+                do_sample=True,
+                pad_token_id=self.tokenizer.eos_token_id,
+                repetition_penalty=1.1,
+                top_p=0.9
+            )
+
+            generated_text = response[0]['generated_text']
+
+            if "Educational Response:" in generated_text:
+                ai_response = generated_text.split("Educational Response:")[-1].strip()
+            else:
+                ai_response = generated_text.replace(prompt, "").strip()
+
+            ai_response = ai_response.replace("Student Question:", "").replace("Subject:", "").replace("Difficulty Level:", "").strip()
+
+            formatted_response = f"**🎓 EduTutor AI Response**\n\n"
+            formatted_response += f"**Question:** {user_input}\n"
+            formatted_response += f"**Subject:** {subject} | **Level:** {difficulty}\n\n"
+            formatted_response += f"**Answer:**\n{ai_response}\n\n"
+            formatted_response += f"**💡 Study Tip:** Practice similar problems and don't hesitate to ask follow-up questions!"
+
+            print("✅ Dynamic response generated successfully!")
+            return formatted_response
+
+        except Exception as e:
+            print(f"⚠️ Error in dynamic generation: {str(e)}")
+            return self.generate_fallback_response(user_input, subject, difficulty)
+
+    def generate_response(self, user_input: str, subject: str = "General", difficulty: str = "Intermediate") -> str:
+        """Main response generation method"""
+        try:
+            if self.is_greeting(user_input):
+                return self.generate_greeting_response()
+
+            if self.is_math_problem(user_input):
+                return self.solve_math_problem(user_input)
+
+            if self.text_generator is not None:
+                return self.generate_dynamic_response(user_input, subject, difficulty)
+            else:
+                print("⚠️ AI model not loaded, using fallback response")
+                return self.generate_fallback_response(user_input, subject, difficulty)
+
+        except Exception as e:
+            print(f"❌ Error in generate_response: {str(e)}")
+            return self.generate_fallback_response(user_input, subject, difficulty)
+
+    def generate_greeting_response(self) -> str:
+        """Generate a friendly greeting response"""
+        responses = [
+            "Hello! I'm EduTutor AI, your personal learning assistant. I'm here to help you with any subject you'd like to learn about. What would you like to study today?",
+            "Hi there! Welcome to EduTutor AI! I'm excited to help you learn and grow. Whether it's math, science, history, or any other subject, I'm here to guide you. What can I help you with?",
+            "Greetings! I'm your AI tutor, ready to make learning fun and engaging. I can help explain concepts, answer questions, and support your educational journey. What topic interests you today?",
+            "Hello and welcome! I'm EduTutor AI, designed to be your friendly learning companion. I'm here to help you understand complex topics, solve problems, and achieve your learning goals. How can I assist you today?"
+        ]
+        return random.choice(responses)
+
+    def solve_math_problem(self, problem: str) -> str:
+        """Solve math problems accurately"""
+        try:
+            if self.math_solver.is_algebraic_equation(problem):
+                return self.math_solver.solve_algebraic_equation(problem)
+            else:
+                return self.math_solver.solve_arithmetic_expression(problem)
+
+        except Exception as e:
+            return f"**Mathematical Analysis**\n\n**Problem:** {problem}\n\n**Solution Approach:**\n• Identify the type of problem (arithmetic, algebraic, geometric)\n• Apply appropriate mathematical methods\n• Show all steps clearly\n• Verify the final answer\n\nPlease provide more details about the specific problem you'd like me to solve."
+
+    def generate_fallback_response(self, user_input: str, subject: str, difficulty: str) -> str:
+        """Generate fallback educational response when AI model fails"""
+        topic_info = self.knowledge_base.get_accurate_info(user_input, subject)
+
+        response = f"""**🎓 Educational Response: {user_input}**
+
+**Subject:** {subject} | **Difficulty Level:** {difficulty}
+
+**Understanding the Concept:**
+{topic_info['definition']}
+
+**Key Learning Points:**
+"""
+        for concept in topic_info['key_concepts']:
+            response += f"• **{concept}:** Essential for comprehensive understanding\n"
+
+        response += f"""
+**Practical Applications:**
+{topic_info['applications']}
+
+**Study Recommendations for {subject}:**
+• Review fundamental principles regularly
+• Practice with diverse examples and problems
+• Connect new learning to previous knowledge
+• Seek additional resources for deeper understanding
+• Don't hesitate to ask follow-up questions!
+
+**💡 Learning Tip:** Break down complex topics into smaller, manageable parts and practice regularly for best results!
+"""
+
+        return response
+
+class HomeworkAnalyzer:
+    def __init__(self, knowledge_base, math_solver):
+        self.knowledge_base = knowledge_base
+        self.math_solver = math_solver
+
+    def extract_problems_from_homework(self, homework: str) -> list:
+        """Extract individual problems from homework text"""
+        problems = []
+
+        lines = homework.split('\n')
+        current_problem = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                if current_problem:
+                    problems.append(current_problem.strip())
+                    current_problem = ""
+                continue
+
+            if (line.startswith(('1.', '2.', '3.', '4.', '5.', '6.', '7.', '8.', '9.')) or
+                line.startswith(('a)', 'b)', 'c)', 'd)', 'e)')) or
+                line.startswith(('Problem', 'Question', 'Exercise')) or
+                re.match(r'^\d+[\.\)]\s', line)):
+
+                if current_problem:
+                    problems.append(current_problem.strip())
+                current_problem = line
+            else:
+                current_problem += " " + line
+
+        if current_problem:
+            problems.append(current_problem.strip())
+
+        if not problems:
+            problems = [homework.strip()]
+
+        return problems
+
+    def solve_math_problem_detailed(self, problem: str) -> str:
+        """Provide detailed solution for math problems"""
+        return self.math_solver.solve_algebraic_equation(problem) if self.math_solver.is_algebraic_equation(problem) else self.math_solver.solve_arithmetic_expression(problem)
+
+    def explain_science_problem(self, problem: str, subject: str) -> str:
+        """Provide detailed explanation for science problems"""
+        explanation = f"**Problem:** {problem}\n\n"
+
+        topic_info = self.knowledge_base.get_accurate_info(problem, subject)
+
+        explanation += "**Scientific Analysis:**\n"
+        explanation += f"**Concept:** {topic_info['definition']}\n\n"
+
+        explanation += "**Solution Approach:**\n"
+        if subject == "Physics":
+            explanation += "1. **Identify the physical principles:** What laws or theories apply?\n"
+            explanation += "2. **List given information:** What measurements or conditions are provided?\n"
+            explanation += "3. **Determine unknowns:** What needs to be calculated or explained?\n"
+            explanation += "4. **Apply relevant equations:** Use appropriate physics formulas\n"
+            explanation += "5. **Solve systematically:** Work through the mathematics step by step\n"
+            explanation += "6. **Check units and reasonableness:** Ensure your answer makes physical sense\n\n"
+
+        elif subject == "Chemistry":
+            explanation += "1. **Identify the chemical process:** What type of reaction or phenomenon?\n"
+            explanation += "2. **Write relevant equations:** Chemical formulas and balanced equations\n"
+            explanation += "3. **Apply chemical principles:** Use appropriate laws and theories\n"
+            explanation += "4. **Calculate quantities:** Use stoichiometry or other methods\n"
+            explanation += "5. **Consider conditions:** Temperature, pressure, concentration effects\n"
+            explanation += "6. **Verify results:** Check if the answer is chemically reasonable\n\n"
+
+        elif subject == "Biology":
+            explanation += "1. **Identify biological processes:** What life processes are involved?\n"
+            explanation += "2. **Consider structure and function:** How do biological structures relate?\n"
+            explanation += "3. **Apply biological principles:** Use relevant theories and concepts\n"
+            explanation += "4. **Analyze relationships:** How do different factors interact?\n"
+            explanation += "5. **Consider context:** Environmental and evolutionary factors\n"
+            explanation += "6. **Draw conclusions:** What can be inferred from the evidence?\n\n"
+
+        explanation += "**Key Concepts Involved:**\n"
+        for concept in topic_info['key_concepts']:
+            explanation += f"• **{concept}:** Important for understanding this problem\n"
+
+        explanation += f"\n**Real-World Connection:**\n{topic_info['applications']}\n\n"
+
+        explanation += "**Study Tips:**\n"
+        explanation += "• Review the fundamental concepts before attempting problems\n"
+        explanation += "• Practice similar problems to build confidence\n"
+        explanation += "• Connect the problem to real-world applications\n"
+        explanation += "• Don't hesitate to ask for clarification on difficult concepts\n\n"
+
+        return explanation
+
+    def analyze_homework_comprehensive(self, homework: str, subject: str) -> str:
+        """Provide comprehensive homework analysis with detailed explanations"""
+        if not homework.strip():
+            return "Please enter your homework for analysis."
+
+        problems = self.extract_problems_from_homework(homework)
+
+        analysis = f"""📊 **Comprehensive Homework Analysis - {subject}**
+**Analysis Date:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
+**Number of Problems Identified:** {len(problems)}
+**Word Count:** {len(homework.split())} words
+
+## 📝 Homework Overview
+Your homework contains {len(problems)} problem(s) that I'll analyze individually with detailed explanations and solutions.
+
+"""
+
+        for i, problem in enumerate(problems, 1):
+            analysis += f"""## 🔍 Problem {i} Analysis
+
+**Problem Statement:** {problem}
+
+"""
+
+            if self.math_solver.is_algebraic_equation(problem) or any(op in problem for op in ['+', '-', '*', '/', '(', ')']):
+                analysis += self.solve_math_problem_detailed(problem)
+            elif subject in ["Physics", "Chemistry", "Biology"]:
+                analysis += self.explain_science_problem(problem, subject)
+            else:
+                analysis += f"""**Problem Analysis:**
+This appears to be a {subject} problem that requires systematic approach.
+
+**Solution Strategy:**
+1. **Understand the question:** Read carefully and identify what's being asked
+2. **Gather information:** List all given facts and data
+3. **Plan your approach:** Choose appropriate methods and techniques
+4. **Execute the solution:** Work through step by step
+5. **Review and verify:** Check your answer for accuracy and completeness
+
+**Key Points to Remember:**
+• Show all your work clearly
+• Explain your reasoning at each step
+• Use appropriate terminology for {subject}
+• Connect your answer to the broader concepts in {subject}
+
+"""
+
+            analysis += "---\n\n"
+
+        analysis += f"""## 📈 Overall Homework Assessment
+
+### Strengths Identified:
+• Shows engagement with {subject} concepts
+• Demonstrates effort in tackling the problems
+• Covers important topics in the curriculum
+• Provides opportunity to practice key skills
+
+### Areas for Improvement:
+• Ensure all steps are shown clearly in mathematical work
+• Use proper scientific notation and units where applicable
+• Connect solutions to underlying theoretical principles
+• Review work for accuracy and completeness
+
+### Subject-Specific Recommendations ({subject}):
+"""
+
+        if subject == "Mathematics":
+            analysis += """• **Show all work:** Every step should be visible and logical
+• **Check answers:** Substitute back into original equations when possible
+• **Use proper notation:** Mathematical symbols and formatting
+• **Explain reasoning:** Don't just show calculations, explain why you chose each method
+• **Practice regularly:** Mathematics requires consistent practice to build fluency"""
+
+        elif subject == "Physics":
+            analysis += """• **Identify principles:** Always state which physical laws apply
+• **Use correct units:** Physics is meaningless without proper units
+• **Draw diagrams:** Visual representations help clarify problems
+• **Check reasonableness:** Does your answer make physical sense?
+• **Connect to real world:** How does this relate to everyday phenomena?"""
+
+        elif subject == "Chemistry":
+            analysis += """• **Balance equations:** All chemical equations must be balanced
+• **Show stoichiometry:** Demonstrate mole relationships clearly
+• **Include units:** Concentration, temperature, pressure units are crucial
+• **Consider conditions:** State temperature, pressure when relevant
+• **Safety awareness:** Always consider safety implications of chemical processes"""
+
+        elif subject == "Biology":
+            analysis += """• **Use proper terminology:** Biological terms should be used correctly
+• **Show relationships:** Connect structure to function
+• **Consider scale:** From molecular to ecosystem levels
+• **Include examples:** Real organisms and biological processes
+• **Think evolutionarily:** How do these concepts relate to evolution and adaptation?"""
+
+        else:
+            analysis += """• **Use subject-specific vocabulary:** Demonstrate understanding of key terms
+• **Provide examples:** Support your answers with relevant examples
+• **Show connections:** Link concepts to broader themes in the subject
+• **Cite sources:** Reference appropriate materials when needed
+• **Think critically:** Analyze and evaluate information, don't just memorize"""
+
+        analysis += f"""
+
+## 🎯 Detailed Study Recommendations
+
+### Immediate Actions:
+1. **Review each problem solution** provided above
+2. **Practice similar problems** to reinforce understanding
+3. **Clarify any confusing concepts** with additional study
+4. **Organize your work** more systematically for future assignments
+
+### Long-term Learning Strategy:
+1. **Build strong foundations** in basic {subject} concepts
+2. **Practice regularly** with varied problem types
+3. **Seek help early** when concepts are unclear
+4. **Connect learning** to real-world applications
+5. **Review and reflect** on your problem-solving process
+
+## 💡 Additional Resources
+
+### For {subject}:
+• Review textbook chapters related to these topics
+• Practice with additional problems from your coursebook
+• Watch educational videos for visual explanations
+• Form study groups to discuss challenging concepts
+• Visit your teacher during office hours for personalized help
+
+## 🌟 Encouragement and Final Thoughts
+
+Your homework shows genuine effort and engagement with {subject}. The problems you're working on are building important skills and knowledge that will serve you well in advanced studies and real-world applications.
+
+**Remember:**
+• Learning is a process - mistakes are part of growth
+• Each problem you solve builds your understanding
+• Don't hesitate to ask questions when you're stuck
+• Practice and persistence lead to mastery
+
+**Grade Estimate:** Based on effort and understanding demonstrated: B+ to A- (85-92%)
+
+Keep up the excellent work, and continue to approach your studies with curiosity and determination!
+
+---
+*This analysis is designed to help you improve your understanding and performance in {subject}. Use it as a guide for studying and preparing for future assignments.*
+"""
+
+        return analysis
+
+class EducationalFeatures:
+    def __init__(self, ai_tutor):
+        self.ai_tutor = ai_tutor
+        self.progress_data = {}
+        self.quiz_sessions = {}
+        self.homework_analyzer = HomeworkAnalyzer(ai_tutor.knowledge_base, ai_tutor.math_solver)
+
+    def create_quiz(self, topic: str, subject: str, num_questions: int = 5) -> tuple:
+        """Generate quiz without showing answers initially"""
+        if not topic.strip():
+            return "Please enter a topic for the quiz.", ""
+
+        quiz_questions = self.generate_quiz_questions(topic, subject, num_questions)
+
+        session_id = f"quiz_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+        self.quiz_sessions[session_id] = {
+            "topic": topic,
+            "subject": subject,
+            "questions": quiz_questions,
+            "submitted": False,
+            "user_answers": {},
+            "score": 0
+        }
+
+        quiz_display = f"""📝 **Quiz: {topic} in {subject}**
+**Instructions:** Answer all questions and click Submit to see your results.
+
+"""
+
+        for i, q in enumerate(quiz_questions, 1):
+            quiz_display += f"""**Question {i}:** {q['question']}
+A) {q['options']['A']}
+B) {q['options']['B']}
+C) {q['options']['C']}
+D) {q['options']['D']}
+
+"""
+
+        return quiz_display, session_id
+
+    def generate_quiz_questions(self, topic: str, subject: str, num_questions: int) -> list:
+        """Generate quiz questions based on topic and subject"""
+
+        question_templates = {
+            "Mathematics": [
+                {
+                    "question": f"What is the fundamental principle behind {topic}?",
+                    "options": {"A": "Basic arithmetic operations", "B": "Logical reasoning and problem-solving", "C": "Memorization of formulas", "D": "Calculator usage"},
+                    "correct": "B",
+                    "explanation": "Mathematics is fundamentally about logical reasoning and systematic problem-solving approaches."
+                },
+                {
+                    "question": f"How is {topic} typically applied in real-world scenarios?",
+                    "options": {"A": "Only in academic settings", "B": "In various fields like engineering, finance, and science", "C": "Rarely used outside school", "D": "Only by mathematicians"},
+                    "correct": "B",
+                    "explanation": f"{topic} has wide applications across many professional fields and everyday situations."
+                },
+                {
+                    "question": f"What makes {topic} important in mathematics?",
+                    "options": {"A": "It's easy to memorize", "B": "It connects to many other mathematical concepts", "C": "It's only for advanced students", "D": "It's not really important"},
+                    "correct": "B",
+                    "explanation": f"{topic} serves as a foundation that connects to many other areas of mathematics."
+                },
+                {
+                    "question": f"When learning {topic}, what's the best approach?",
+                    "options": {"A": "Memorize all formulas", "B": "Understand concepts and practice regularly", "C": "Skip the theory", "D": "Only do easy problems"},
+                    "correct": "B",
+                    "explanation": "Understanding concepts deeply and practicing regularly leads to true mastery."
+                },
+                {
+                    "question": f"What skills does studying {topic} develop?",
+                    "options": {"A": "Only calculation skills", "B": "Critical thinking and problem-solving", "C": "Memorization only", "D": "No useful skills"},
+                    "correct": "B",
+                    "explanation": f"Studying {topic} develops critical thinking, logical reasoning, and systematic problem-solving skills."
+                }
+            ],
+            "Physics": [
+                {
+                    "question": f"What physical principles are involved in {topic}?",
+                    "options": {"A": "Only theoretical concepts", "B": "Fundamental laws of nature", "C": "Abstract mathematical ideas", "D": "Philosophical concepts"},
+                    "correct": "B",
+                    "explanation": f"{topic} is based on fundamental physical laws that govern natural phenomena."
+                },
+                {
+                    "question": f"How does {topic} relate to everyday experiences?",
+                    "options": {"A": "It doesn't relate to daily life", "B": "It explains many phenomena we observe", "C": "Only relevant in laboratories", "D": "Only important for scientists"},
+                    "correct": "B",
+                    "explanation": f"Understanding {topic} helps explain many phenomena we encounter in daily life."
+                },
+                {
+                    "question": f"What makes {topic} significant in physics?",
+                    "options": {"A": "It's just theory", "B": "It helps us understand how the universe works", "C": "It's only for experts", "D": "It has no practical value"},
+                    "correct": "B",
+                    "explanation": f"{topic} provides insights into the fundamental workings of the universe."
+                },
+                {
+                    "question": f"How should one approach learning {topic}?",
+                    "options": {"A": "Memorize equations only", "B": "Understand concepts and see applications", "C": "Avoid the math", "D": "Just read about it"},
+                    "correct": "B",
+                    "explanation": "The best approach is to understand the underlying concepts and see how they apply to real situations."
+                },
+                {
+                    "question": f"What can studying {topic} lead to?",
+                    "options": {"A": "Nothing practical", "B": "Better understanding of natural phenomena and technology", "C": "Only academic knowledge", "D": "Confusion"},
+                    "correct": "B",
+                    "explanation": f"Studying {topic} enhances understanding of natural phenomena and technological applications."
+                }
+            ],
+            "General": [
+                {
+                    "question": f"What is the main concept behind {topic}?",
+                    "options": {"A": "A complex theoretical framework", "B": "A fundamental idea with practical applications", "C": "An outdated concept", "D": "A specialized technical term"},
+                    "correct": "B",
+                    "explanation": f"{topic} represents important concepts that have both theoretical significance and practical applications."
+                },
+                {
+                    "question": f"Why is understanding {topic} important?",
+                    "options": {"A": "It's not really important", "B": "It helps build foundational knowledge", "C": "Only for academic purposes", "D": "Just for passing tests"},
+                    "correct": "B",
+                    "explanation": f"Understanding {topic} builds essential foundational knowledge for further learning and practical application."
+                },
+                {
+                    "question": f"How does {topic} connect to other subjects?",
+                    "options": {"A": "It doesn't connect to anything", "B": "It has connections to many different fields", "C": "Only to one specific area", "D": "Connections aren't important"},
+                    "correct": "B",
+                    "explanation": f"{topic} often has interdisciplinary connections that enrich understanding across multiple fields."
+                },
+                {
+                    "question": f"What's the best way to learn about {topic}?",
+                    "options": {"A": "Memorize facts only", "B": "Engage actively with examples and applications", "C": "Read passively", "D": "Avoid difficult parts"},
+                    "correct": "B",
+                    "explanation": "Active engagement with examples and real-world applications leads to deeper understanding."
+                },
+                {
+                    "question": f"How can knowledge of {topic} be applied?",
+                    "options": {"A": "It can't be applied", "B": "In various real-world situations and problem-solving", "C": "Only in textbooks", "D": "Only by experts"},
+                    "correct": "B",
+                    "explanation": f"Knowledge of {topic} can be applied in many real-world situations and enhances problem-solving abilities."
+                }
+            ]
+        }
+
+        templates = question_templates.get(subject, question_templates["General"])
+        return templates[:num_questions]
+
+    def submit_quiz(self, session_id: str, answers: dict, student_name: str = "") -> str:
+        """Process quiz submission and show results"""
+        if session_id not in self.quiz_sessions:
+            return "❌ Quiz session not found. Please generate a new quiz."
+
+        quiz_data = self.quiz_sessions[session_id]
+        if quiz_data["submitted"]:
+            return "❌ This quiz has already been submitted."
+
+        correct_count = 0
+        total_questions = len(quiz_data["questions"])
+
+        results = f"""📊 **Quiz Results: {quiz_data['topic']} in {quiz_data['subject']}**
+
+"""
+
+        for i, question in enumerate(quiz_data["questions"], 1):
+            user_answer = answers.get(f"q{i}", "").upper()
+            correct_answer = question["correct"]
+            is_correct = user_answer == correct_answer
+
+            if is_correct:
+                correct_count += 1
+
+            results += f"""**Question {i}:** {question['question']}
+Your Answer: {user_answer} {'✅' if is_correct else '❌'}
+Correct Answer: {correct_answer}
+Explanation: {question['explanation']}
+
+"""
+
+        score = (correct_count / total_questions) * 100
+        quiz_data["score"] = score
+        quiz_data["submitted"] = True
+        quiz_data["user_answers"] = answers
+
+        if score >= 90:
+            performance = "Excellent! Outstanding understanding of the topic."
+        elif score >= 80:
+            performance = "Very Good! Strong grasp of the concepts."
+        elif score >= 70:
+            performance = "Good! Solid understanding with room for improvement."
+        elif score >= 60:
+            performance = "Fair. Consider reviewing the topic more thoroughly."
+        else:
+            performance = "Needs Improvement. Additional study and practice recommended."
+
+        results += f"""📈 **Final Score: {score:.1f}% ({correct_count}/{total_questions})**
+**Performance Level:** {performance}
+
+**Recommendations:**
+• Review questions you got wrong and understand the explanations
+• Practice with additional problems on {quiz_data['topic']}
+• Connect this topic to related concepts in {quiz_data['subject']}
+• Ask your tutor for clarification on challenging areas
+
+"""
+
+        if student_name.strip():
+            progress_update = self.track_progress(student_name, quiz_data['subject'], quiz_data['topic'], score, f"Quiz completed on {quiz_data['topic']}")
+            results += f"✅ Progress automatically updated for {student_name}!\n"
+
+        return results
+
+    def create_study_plan(self, topic: str, subject: str, duration: str) -> str:
+        """Generate comprehensive study plan"""
+        if not topic.strip():
+            return "Please enter a topic for the study plan."
+
+        study_content = self.generate_study_content(topic, subject)
+
+        study_plan = f"""📋 **Comprehensive Study Plan: {topic} in {subject}**
+**Duration:** {duration}
+**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+## 🎯 Learning Objectives
+By completing this study plan, you will:
+• Master fundamental concepts of {topic}
+• Understand key terminologies and their applications
+• Apply knowledge to solve real-world problems
+• Connect {topic} to broader {subject} principles
+
+## 📚 Subtopics and Learning Modules
+
+"""
+
+        for i, subtopic in enumerate(study_content["subtopics"], 1):
+            study_plan += f"""### Module {i}: {subtopic['name']}
+**Time Required:** {subtopic['time']}
+**Difficulty Level:** {subtopic['difficulty']}
+
+**Key Concepts:**
+{subtopic['concepts']}
+
+**Learning Benefits:**
+{subtopic['benefits']}
+
+**Recommended Activities:**
+{subtopic['activities']}
+
+---
+
+"""
+
+        study_plan += f"""## 📖 Essential Terminologies
+
+"""
+
+        for term in study_content["terminologies"]:
+            study_plan += f"""**{term['term']}:** {term['definition']}
+*Usage:* {term['usage']}
+
+"""
+
+        total_hours = sum([int(st['time'].split()[0]) for st in study_content["subtopics"]])
+
+        study_plan += f"""## ⏰ Time Management Plan
+
+**Total Estimated Time:** {total_hours} hours over {duration}
+**Recommended Schedule:**
+• Daily Study Time: {max(1, total_hours // 30)} hour(s) per day
+• Weekly Goals: Complete 1-2 modules per week
+• Review Sessions: 30 minutes every 3 days
+
+## 📊 Progress Tracking
+
+**Week 1:** Complete Modules 1-2, master basic terminologies
+**Week 2:** Complete Modules 3-4, practice applications
+**Week 3:** Review all concepts, take practice quizzes
+**Week 4:** Advanced applications and problem-solving
+
+## 🎯 Assessment Milestones
+
+1. **Module Completion:** After each module, test understanding with practice problems
+2. **Weekly Review:** Summarize key learnings and identify areas needing more attention
+3. **Mid-Point Assessment:** Take a comprehensive quiz covering first half of material
+4. **Final Assessment:** Complete comprehensive evaluation of all topics
+
+## 💡 Study Tips for Success
+
+### For {subject}:
+"""
+
+        if subject == "Mathematics":
+            study_plan += """• **Practice Daily:** Mathematics requires consistent practice to build fluency
+• **Show Your Work:** Always write out complete solutions step by step
+• **Check Answers:** Verify solutions by substituting back into original problems
+• **Connect Concepts:** See how different mathematical ideas relate to each other
+• **Use Multiple Methods:** Try solving problems in different ways to deepen understanding"""
+
+        elif subject == "Physics":
+            study_plan += """• **Visualize Concepts:** Draw diagrams and use visual aids to understand phenomena
+• **Connect Math to Physics:** See how mathematical equations describe physical reality
+• **Do Experiments:** When possible, observe physical phenomena firsthand
+• **Think in Units:** Always include proper units and check dimensional analysis
+• **Real-World Applications:** Connect physics concepts to everyday experiences"""
+
+        elif subject == "Chemistry":
+            study_plan += """• **Molecular Thinking:** Visualize atoms and molecules in chemical processes
+• **Balance Equations:** Practice writing and balancing chemical equations
+• **Lab Safety:** Always consider safety implications of chemical reactions
+• **Periodic Trends:** Use the periodic table as a guide to chemical behavior
+• **Stoichiometry Practice:** Master quantitative relationships in chemical reactions"""
+
+        elif subject == "Biology":
+            study_plan += """• **Structure-Function:** Always connect biological structures to their functions
+• **Scale Thinking:** Consider processes from molecular to ecosystem levels
+• **Evolution Connection:** See how evolutionary principles explain biological phenomena
+• **Use Examples:** Study specific organisms and biological systems
+• **Process Diagrams:** Draw and label biological processes and cycles"""
+
+        else:
+            study_plan += """• **Active Reading:** Engage with material through note-taking and questioning
+• **Regular Review:** Revisit concepts frequently to reinforce learning
+• **Practice Application:** Use knowledge to solve problems and analyze situations
+• **Seek Connections:** Link new learning to what you already know
+• **Ask Questions:** Don't hesitate to seek clarification on difficult concepts"""
+
+        study_plan += f"""
+
+## 📚 Recommended Resources
+
+### Primary Resources:
+• Textbook chapters on {topic}
+• Educational videos and animations
+• Interactive simulations and tools
+• Practice problem sets
+
+### Supplementary Resources:
+• Online courses and tutorials
+• Study groups and peer discussions
+• Educational apps and games
+• Real-world case studies
+
+## 🌟 Motivation and Success Strategies
+
+**Remember:**
+• Learning is a journey - be patient with yourself
+• Mistakes are opportunities to learn and grow
+• Consistent effort leads to mastery
+• Connect your learning to your goals and interests
+
+**Success Indicators:**
+• You can explain concepts in your own words
+• You can apply knowledge to new situations
+• You feel confident tackling related problems
+• You can teach the concepts to someone else
+
+---
+
+**Good luck with your studies! This plan is designed to help you achieve mastery of {topic} in {subject}. Adjust the timeline as needed based on your learning pace and schedule.**
+"""
+
+        return study_plan
+
+    def generate_study_content(self, topic: str, subject: str) -> dict:
+        """Generate subtopics and terminologies for study plans"""
+
+        if subject == "Mathematics":
+            if "algebra" in topic.lower():
+                return {
+                    "subtopics": [
+                        {
+                            "name": "Variables and Expressions",
+                            "time": "3 hours",
+                            "difficulty": "Beginner",
+                            "concepts": "Understanding variables as unknown quantities, writing algebraic expressions, evaluating expressions with given values.",
+                            "benefits": "Builds foundation for all algebraic thinking and problem-solving.",
+                            "activities": "Practice writing expressions for word problems, evaluate expressions with different variable values, identify like terms."
+                        },
+                        {
+                            "name": "Linear Equations",
+                            "time": "4 hours",
+                            "difficulty": "Intermediate",
+                            "concepts": "Solving one-step and multi-step linear equations, understanding equality properties, checking solutions.",
+                            "benefits": "Essential skill for solving real-world problems involving unknown quantities.",
+                            "activities": "Solve various linear equations, create equations from word problems, verify solutions by substitution."
+                        },
+                        {
+                            "name": "Systems of Equations",
+                            "time": "5 hours",
+                            "difficulty": "Intermediate",
+                            "concepts": "Solving systems using substitution and elimination methods, graphical interpretation of solutions.",
+                            "benefits": "Enables solving complex problems with multiple unknowns and constraints.",
+                            "activities": "Practice substitution and elimination methods, graph systems to visualize solutions, solve application problems."
+                        },
+                        {
+                            "name": "Quadratic Equations",
+                            "time": "6 hours",
+                            "difficulty": "Advanced",
+                            "concepts": "Factoring quadratics, using the quadratic formula, understanding parabolic graphs and their properties.",
+                            "benefits": "Opens door to advanced mathematics and modeling of curved relationships.",
+                            "activities": "Factor various quadratic expressions, apply quadratic formula, analyze parabolic graphs and their real-world applications."
+                        }
+                    ],
+                    "terminologies": [
+                        {"term": "Variable", "definition": "A symbol (usually a letter) that represents an unknown number or quantity", "usage": "In the equation 2x + 5 = 15, x is the variable representing the unknown number."},
+                        {"term": "Coefficient", "definition": "The numerical factor of a term containing a variable", "usage": "In 3x + 7, the coefficient of x is 3."},
+                        {"term": "Linear Equation", "definition": "An equation where the highest power of the variable is 1", "usage": "2x + 5 = 15 is a linear equation because x has power 1."},
+                        {"term": "Quadratic Equation", "definition": "An equation where the highest power of the variable is 2", "usage": "x² - 5x + 6 = 0 is a quadratic equation because of the x² term."},
+                        {"term": "Solution", "definition": "The value(s) of the variable that make the equation true", "usage": "For 2x + 5 = 15, the solution is x = 5 because 2(5) + 5 = 15."}
+                    ]
+                }
+            else:
+                return {
+                    "subtopics": [
+                        {
+                            "name": f"Fundamentals of {topic}",
+                            "time": "3 hours",
+                            "difficulty": "Beginner",
+                            "concepts": f"Basic principles and definitions related to {topic}, foundational concepts and terminology.",
+                            "benefits": f"Establishes solid groundwork for understanding {topic} in mathematics.",
+                            "activities": f"Study definitions, work through basic examples, practice fundamental calculations related to {topic}."
+                        },
+                        {
+                            "name": f"Applications of {topic}",
+                            "time": "4 hours",
+                            "difficulty": "Intermediate",
+                            "concepts": f"Real-world applications and problem-solving techniques using {topic}.",
+                            "benefits": f"Connects mathematical theory to practical situations and enhances problem-solving skills.",
+                            "activities": f"Solve word problems, explore real-world applications, practice various problem-solving strategies."
+                        },
+                        {
+                            "name": f"Advanced Concepts in {topic}",
+                            "time": "5 hours",
+                            "difficulty": "Advanced",
+                            "concepts": f"Complex applications and connections to other mathematical areas.",
+                            "benefits": f"Develops deep understanding and prepares for advanced mathematical study.",
+                            "activities": f"Tackle challenging problems, explore connections to other math topics, engage in mathematical reasoning."
+                        }
+                    ],
+                    "terminologies": [
+                        {"term": f"{topic} Principle", "definition": f"The fundamental rule or concept that governs {topic}", "usage": f"Applied when solving problems related to {topic}."},
+                        {"term": "Mathematical Reasoning", "definition": "The process of using logical thinking to solve mathematical problems", "usage": f"Essential for understanding and applying {topic} concepts."},
+                        {"term": "Problem-Solving Strategy", "definition": "A systematic approach to tackling mathematical problems", "usage": f"Helps organize thinking when working with {topic} problems."}
+                    ]
+                }
+
+        elif subject == "Physics":
+            return {
+                "subtopics": [
+                    {
+                        "name": f"Physical Principles of {topic}",
+                        "time": "4 hours",
+                        "difficulty": "Intermediate",
+                        "concepts":f"Fundamental physical laws and principles governing {topic}, mathematical relationships and equations.",
+                        "benefits": f"Understanding the scientific basis of {topic} and its role in the physical world.",
+                        "activities": f"Study relevant physics laws, practice using equations, analyze physical phenomena related to {topic}."
+                    },
+                    {
+                        "name": f"Mathematical Analysis of {topic}",
+                        "time": "5 hours",
+                        "difficulty": "Advanced",
+                        "concepts": f"Quantitative analysis, problem-solving techniques, and mathematical modeling of {topic}.",
+                        "benefits": f"Develops ability to analyze and predict physical behavior using mathematical tools.",
+                        "activities": f"Solve physics problems, create mathematical models, analyze graphs and data related to {topic}."
+                    },
+                    {
+                        "name": f"Applications and Technology",
+                        "time": "3 hours",
+                        "difficulty": "Intermediate",
+                        "concepts": f"Real-world applications of {topic} in technology, engineering, and everyday life.",
+                        "benefits": f"Connects physics concepts to practical applications and technological innovations.",
+                        "activities": f"Explore technological applications, analyze case studies, investigate how {topic} impacts daily life."
+                    }
+                ],
+                "terminologies": [
+                    {"term": "Physical Law", "definition": "A statement that describes a fundamental principle of physics", "usage": f"Physical laws help explain and predict behavior in {topic}."},
+                    {"term": "Quantitative Analysis", "definition": "Using mathematical methods to analyze physical phenomena", "usage": f"Essential for solving problems and making predictions in {topic}."},
+                    {"term": "Scientific Method", "definition": "The systematic approach to understanding natural phenomena", "usage": f"Used to investigate and validate concepts related to {topic}."}
+                ]
+            }
+
+        elif subject == "Biology":
+            return {
+                "subtopics": [
+                    {
+                        "name": f"Biological Basis of {topic}",
+                        "time": "4 hours",
+                        "difficulty": "Intermediate",
+                        "concepts": f"Cellular and molecular mechanisms underlying {topic}, structure-function relationships.",
+                        "benefits": f"Understanding the biological foundation of {topic} at the cellular and molecular level.",
+                        "activities": f"Study cell structures, analyze molecular processes, examine biological mechanisms related to {topic}."
+                    },
+                    {
+                        "name": f"Physiological Processes",
+                        "time": "4 hours",
+                        "difficulty": "Intermediate",
+                        "concepts": f"How {topic} functions in living organisms, regulatory mechanisms and homeostasis.",
+                        "benefits": f"Understanding how {topic} contributes to life processes and organism survival.",
+                        "activities": f"Analyze physiological processes, study regulatory mechanisms, explore homeostatic control related to {topic}."
+                    },
+                    {
+                        "name": f"Ecological and Evolutionary Perspectives",
+                        "time": "3 hours",
+                        "difficulty": "Advanced",
+                        "concepts": f"Role of {topic} in ecosystems, evolutionary significance, and environmental interactions.",
+                        "benefits": f"Connecting {topic} to broader biological and environmental contexts.",
+                        "activities": f"Explore ecological relationships, analyze evolutionary adaptations, investigate environmental factors affecting {topic}."
+                    }
+                ],
+                "terminologies": [
+                    {"term": "Homeostasis", "definition": "The maintenance of stable internal conditions in living organisms", "usage": f"Important for understanding how organisms regulate processes related to {topic}."},
+                    {"term": "Adaptation", "definition": "Evolutionary changes that improve an organism's survival and reproduction", "usage": f"Explains how {topic} has evolved to serve biological functions."},
+                    {"term": "Ecosystem", "definition": "A community of living organisms interacting with their environment", "usage": f"Provides context for understanding {topic} in natural settings."}
+                ]
+            }
+
+        else:
+            return {
+                "subtopics": [
+                    {
+                        "name": f"Introduction to {topic}",
+                        "time": "3 hours",
+                        "difficulty": "Beginner",
+                        "concepts": f"Basic concepts, definitions, and overview of {topic} in the context of {subject}.",
+                        "benefits": f"Establishes foundational understanding of {topic} and its importance in {subject}.",
+                        "activities": f"Read introductory materials, study key definitions, explore basic examples of {topic}."
+                    },
+                    {
+                        "name": f"Core Principles of {topic}",
+                        "time": "4 hours",
+                        "difficulty": "Intermediate",
+                        "concepts": f"Fundamental principles, theories, and methodologies related to {topic}.",
+                        "benefits": f"Develops deeper understanding of how {topic} works and its underlying principles.",
+                        "activities": f"Study core theories, analyze case studies, practice applying principles of {topic}."
+                    },
+                    {
+                        "name": f"Applications and Analysis",
+                        "time": "4 hours",
+                        "difficulty": "Advanced",
+                        "concepts": f"Practical applications, critical analysis, and advanced concepts in {topic}.",
+                        "benefits": f"Enables practical application and critical thinking about {topic}.",
+                        "activities": f"Analyze real-world applications, engage in critical thinking exercises, explore advanced concepts."
+                    }
+                ],
+                "terminologies": [
+                    {"term": f"{topic} Theory", "definition": f"The systematic explanation of principles underlying {topic}", "usage": f"Provides framework for understanding {topic} in {subject}."},
+                    {"term": "Critical Analysis", "definition": "The objective evaluation and interpretation of information", "usage": f"Essential skill for advanced study of {topic}."},
+                    {"term": "Application", "definition": "The practical use of knowledge or principles", "usage": f"How {topic} is used in real-world situations."}
+                ]
+            }
+
+    def track_progress(self, student_name: str, subject: str, topic: str, score: float, activity: str) -> str:
+        """Track student progress across different activities"""
+        if not student_name.strip():
+            return "Please enter a student name to track progress."
+
+        if student_name not in self.progress_data:
+            self.progress_data[student_name] = {
+                "subjects": {},
+                "overall_stats": {
+                    "total_activities": 0,
+                    "average_score": 0,
+                    "total_score": 0,
+                    "join_date": datetime.now().strftime('%Y-%m-%d'),
+                    "last_activity": datetime.now().strftime('%Y-%m-%d %H:%M')
+                }
+            }
+
+        if subject not in self.progress_data[student_name]["subjects"]:
+            self.progress_data[student_name]["subjects"][subject] = {
+                "topics": {},
+                "subject_stats": {
+                    "activities_count": 0,
+                    "average_score": 0,
+                    "total_score": 0,
+                    "best_score": 0,
+                    "recent_activities": []
+                }
+            }
+
+        if topic not in self.progress_data[student_name]["subjects"][subject]["topics"]:
+            self.progress_data[student_name]["subjects"][subject]["topics"][topic] = {
+                "scores": [],
+                "activities": [],
+                "best_score": 0,
+                "latest_score": 0,
+                "improvement_trend": "stable"
+            }
+
+        topic_data = self.progress_data[student_name]["subjects"][subject]["topics"][topic]
+        subject_data = self.progress_data[student_name]["subjects"][subject]["subject_stats"]
+        overall_data = self.progress_data[student_name]["overall_stats"]
+
+        topic_data["scores"].append(score)
+        topic_data["activities"].append({
+            "activity": activity,
+            "score": score,
+            "date": datetime.now().strftime('%Y-%m-%d %H:%M')
+        })
+        topic_data["latest_score"] = score
+        topic_data["best_score"] = max(topic_data["best_score"], score)
+
+        if len(topic_data["scores"]) >= 2:
+            recent_avg = sum(topic_data["scores"][-3:]) / min(3, len(topic_data["scores"]))
+            earlier_avg = sum(topic_data["scores"][:-3]) / max(1, len(topic_data["scores"]) - 3) if len(topic_data["scores"]) > 3 else topic_data["scores"][0]
+
+            if recent_avg > earlier_avg + 5:
+                topic_data["improvement_trend"] = "improving"
+            elif recent_avg < earlier_avg - 5:
+                topic_data["improvement_trend"] = "declining"
+            else:
+                topic_data["improvement_trend"] = "stable"
+
+        subject_data["activities_count"] += 1
+        subject_data["total_score"] += score
+        subject_data["average_score"] = subject_data["total_score"] / subject_data["activities_count"]
+        subject_data["best_score"] = max(subject_data["best_score"], score)
+        subject_data["recent_activities"].append({
+            "topic": topic,
+            "activity": activity,
+            "score": score,
+            "date": datetime.now().strftime('%Y-%m-%d %H:%M')
+        })
+
+        if len(subject_data["recent_activities"]) > 10:
+            subject_data["recent_activities"] = subject_data["recent_activities"][-10:]
+
+        overall_data["total_activities"] += 1
+        overall_data["total_score"] += score
+        overall_data["average_score"] = overall_data["total_score"] / overall_data["total_activities"]
+        overall_data["last_activity"] = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+        return f"✅ Progress updated for {student_name}!"
+
+    def view_progress(self, student_name: str) -> str:
+        """Display comprehensive progress report for a student"""
+        if not student_name.strip():
+            return "Please enter a student name to view progress."
+
+        if student_name not in self.progress_data:
+            return f"No progress data found for {student_name}. Complete some activities first!"
+
+        student_data = self.progress_data[student_name]
+        overall_stats = student_data["overall_stats"]
+
+        report = f"""📊 **Comprehensive Progress Report for {student_name}**
+**Report Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
+
+## 🎯 Overall Performance Summary
+
+**Learning Journey:**
+• **Member Since:** {overall_stats['join_date']}
+• **Last Activity:** {overall_stats['last_activity']}
+• **Total Activities Completed:** {overall_stats['total_activities']}
+• **Overall Average Score:** {overall_stats['average_score']:.1f}%
+
+**Performance Level:** {self.get_performance_level(overall_stats['average_score'])}
+
+## 📚 Subject-wise Performance
+
+"""
+
+        for subject, subject_data in student_data["subjects"].items():
+            subject_stats = subject_data["subject_stats"]
+
+            report += f"""### {subject}
+**Activities Completed:** {subject_stats['activities_count']}
+**Average Score:** {subject_stats['average_score']:.1f}%
+**Best Score:** {subject_stats['best_score']:.1f}%
+**Performance Trend:** {self.analyze_subject_trend(subject_data)}
+
+**Topic Performance:**
+"""
+
+            for topic, topic_data in subject_data["topics"].items():
+                avg_score = sum(topic_data["scores"]) / len(topic_data["scores"])
+                report += f"""• **{topic}:** {avg_score:.1f}% average ({len(topic_data['scores'])} activities) - {topic_data['improvement_trend'].title()} trend
+"""
+
+            if subject_stats["recent_activities"]:
+                report += f"""
+**Recent Activities in {subject}:**
+"""
+                for activity in subject_stats["recent_activities"][-5:]:
+                    report += f"""• {activity['date']}: {activity['activity']} - {activity['score']:.1f}%
+"""
+
+            report += "\n---\n\n"
+
+        report += f"""## 🔍 Learning Insights & Analysis
+
+### Strengths:
+{self.identify_strengths(student_data)}
+
+### Areas for Improvement:
+{self.identify_improvement_areas(student_data)}
+
+### Learning Patterns:
+{self.analyze_learning_patterns(student_data)}
+
+## 🎯 Personalized Recommendations
+
+### Immediate Actions:
+{self.generate_immediate_recommendations(student_data)}
+
+### Long-term Learning Strategy:
+{self.generate_longterm_strategy(student_data)}
+
+## 📈 Progress Visualization
+
+**Score Distribution:**
+• 90-100%: {self.count_scores_in_range(student_data, 90, 100)} activities
+• 80-89%: {self.count_scores_in_range(student_data, 80, 89)} activities
+• 70-79%: {self.count_scores_in_range(student_data, 70, 79)} activities
+• 60-69%: {self.count_scores_in_range(student_data, 60, 69)} activities
+• Below 60%: {self.count_scores_in_range(student_data, 0, 59)} activities
+
+## 🌟 Achievements & Milestones
+
+{self.generate_achievements(student_data)}
+
+## 📅 Next Steps
+
+**Recommended Focus Areas:**
+{self.recommend_focus_areas(student_data)}
+
+**Suggested Activities:**
+• Take quizzes on topics with declining trends
+• Review and practice concepts with scores below 70%
+• Explore advanced topics in your strongest subjects
+• Create study plans for challenging areas
+
+---
+
+**Keep up the excellent work, {student_name}! Your learning journey shows dedication and progress. Continue to challenge yourself and don't hesitate to ask for help when needed.**
+
+*This report is automatically generated based on your activity data. Use it to guide your learning and celebrate your achievements!*
+"""
+
+        return report
+
+    def get_performance_level(self, average_score: float) -> str:
+        """Determine performance level based on average score"""
+        if average_score >= 90:
+            return "🌟 Excellent - Outstanding performance across all activities"
+        elif average_score >= 80:
+            return "🎯 Very Good - Strong understanding with consistent performance"
+        elif average_score >= 70:
+            return "👍 Good - Solid progress with room for improvement"
+        elif average_score >= 60:
+            return "📈 Fair - Making progress, focus on strengthening fundamentals"
+        else:
+            return "🔄 Needs Improvement - Additional support and practice recommended"
+
+    def analyze_subject_trend(self, subject_data: dict) -> str:
+        """Analyze performance trend for a subject"""
+        recent_activities = subject_data["subject_stats"]["recent_activities"]
+        if len(recent_activities) < 3:
+            return "Insufficient data for trend analysis"
+
+        recent_scores = [activity["score"] for activity in recent_activities[-5:]]
+        earlier_scores = [activity["score"] for activity in recent_activities[:-5]] if len(recent_activities) > 5 else recent_scores[:2]
+
+        if not earlier_scores:
+            return "Building foundation"
+
+        recent_avg = sum(recent_scores) / len(recent_scores)
+        earlier_avg = sum(earlier_scores) / len(earlier_scores)
+
+        if recent_avg > earlier_avg + 5:
+            return "📈 Improving steadily"
+        elif recent_avg < earlier_avg - 5:
+            return "📉 Needs attention"
+        else:
+            return "📊 Stable performance"
+
+    def identify_strengths(self, student_data: dict) -> str:
+        """Identify student's academic strengths"""
+        strengths = []
+
+        for subject, subject_data in student_data["subjects"].items():
+            avg_score = subject_data["subject_stats"]["average_score"]
+            if avg_score >= 85:
+                strengths.append(f"• **{subject}:** Excellent performance ({avg_score:.1f}% average)")
+            elif avg_score >= 75:
+                strengths.append(f"• **{subject}:** Strong understanding ({avg_score:.1f}% average)")
+
+        improving_topics = []
+        for subject, subject_data in student_data["subjects"].items():
+            for topic, topic_data in subject_data["topics"].items():
+                if topic_data["improvement_trend"] == "improving":
+                    improving_topics.append(f"{topic} in {subject}")
+
+        if improving_topics:
+            strengths.append(f"• **Improving Topics:** {', '.join(improving_topics[:3])}")
+
+        if not strengths:
+            strengths.append("• Building foundational knowledge across all subjects")
+            strengths.append("• Consistent engagement with learning activities")
+
+        return "\n".join(strengths)
+
+    def identify_improvement_areas(self, student_data: dict) -> str:
+        """Identify areas needing improvement"""
+        improvements = []
+
+        for subject, subject_data in student_data["subjects"].items():
+            avg_score = subject_data["subject_stats"]["average_score"]
+            if avg_score < 70:
+                improvements.append(f"• **{subject}:** Focus on fundamentals ({avg_score:.1f}% average)")
+
+        declining_topics = []
+        for subject, subject_data in student_data["subjects"].items():
+            for topic, topic_data in subject_data["topics"].items():
+                if topic_data["improvement_trend"] == "declining":
+                    declining_topics.append(f"{topic} in {subject}")
+
+        if declining_topics:
+            improvements.append(f"• **Declining Topics:** {', '.join(declining_topics[:3])} - Need review")
+
+        if not improvements:
+            improvements.append("• Continue current learning approach - performance is strong")
+            improvements.append("• Consider exploring more advanced topics to challenge yourself")
+
+        return "\n".join(improvements)
+
+    def analyze_learning_patterns(self, student_data: dict) -> str:
+        """Analyze learning patterns and habits"""
+        patterns = []
+
+        total_activities = student_data["overall_stats"]["total_activities"]
+        join_date = datetime.strptime(student_data["overall_stats"]["join_date"], '%Y-%m-%d')
+        days_active = (datetime.now() - join_date).days + 1
+        avg_activities_per_day = total_activities / days_active
+
+        if avg_activities_per_day >= 1:
+            patterns.append("• **High Engagement:** Very active learner with daily practice")
+        elif avg_activities_per_day >= 0.5:
+            patterns.append("• **Regular Practice:** Consistent learning schedule")
+        else:
+            patterns.append("• **Occasional Practice:** Consider increasing study frequency")
+
+        all_scores = []
+        for subject_data in student_data["subjects"].values():
+            for topic_data in subject_data["topics"].values():
+                all_scores.extend(topic_data["scores"])
+
+        if all_scores:
+            score_variance = sum((score - student_data["overall_stats"]["average_score"])**2 for score in all_scores) / len(all_scores)
+            if score_variance < 100:
+                patterns.append("• **Consistent Performance:** Stable learning with predictable results")
+            else:
+                patterns.append("• **Variable Performance:** Results vary - focus on consistent study habits")
+
+        return "\n".join(patterns)
+
+    def generate_immediate_recommendations(self, student_data: dict) -> str:
+        """Generate immediate action recommendations"""
+        recommendations = []
+
+        lowest_subjects = []
+        for subject, subject_data in student_data["subjects"].items():
+            avg_score = subject_data["subject_stats"]["average_score"]
+            if avg_score < 75:
+                lowest_subjects.append((subject, avg_score))
+
+        lowest_subjects.sort(key=lambda x: x[1])
+
+        if lowest_subjects:
+            subject, score = lowest_subjects[0]
+            recommendations.append(f"• **Priority Focus:** Dedicate extra time to {subject} (current average: {score:.1f}%)")
+
+        review_topics = []
+        for subject, subject_data in student_data["subjects"].items():
+            for topic, topic_data in subject_data["topics"].items():
+                if topic_data["improvement_trend"] == "declining" or topic_data["latest_score"] < 70:
+                    review_topics.append(f"{topic} in {subject}")
+
+        if review_topics:
+            recommendations.append(f"• **Review Topics:** {', '.join(review_topics[:2])}")
+
+        recommendations.append("• **Daily Practice:** Aim for at least 30 minutes of focused study daily")
+        recommendations.append("• **Active Learning:** Take quizzes and complete practice problems regularly")
+
+        return "\n".join(recommendations)
+
+    def generate_longterm_strategy(self, student_data: dict) -> str:
+        """Generate long-term learning strategy"""
+        strategies = []
+
+        strong_subjects = []
+        for subject, subject_data in student_data["subjects"].items():
+            avg_score = subject_data["subject_stats"]["average_score"]
+            if avg_score >= 80:
+                strong_subjects.append(subject)
+
+        if strong_subjects:
+            strategies.append(f"• **Advanced Learning:** Explore advanced topics in {', '.join(strong_subjects[:2])}")
+
+        strategies.append("• **Balanced Approach:** Maintain strengths while improving weaker areas")
+        strategies.append("• **Regular Assessment:** Take comprehensive quizzes monthly to track progress")
+        strategies.append("• **Goal Setting:** Set specific, measurable learning goals for each subject")
+        strategies.append("• **Peer Learning:** Consider study groups or teaching others to reinforce knowledge")
+
+        return "\n".join(strategies)
+
+    def count_scores_in_range(self, student_data: dict, min_score: float, max_score: float) -> int:
+        """Count activities with scores in a specific range"""
+        count = 0
+        for subject_data in student_data["subjects"].values():
+            for topic_data in subject_data["topics"].values():
+                for score in topic_data["scores"]:
+                    if min_score <= score <= max_score:
+                        count += 1
+        return count
+
+    def generate_achievements(self, student_data: dict) -> str:
+        """Generate achievement badges and milestones"""
+        achievements = []
+
+        total_activities = student_data["overall_stats"]["total_activities"]
+        avg_score = student_data["overall_stats"]["average_score"]
+
+        if total_activities >= 50:
+            achievements.append("🏆 **Learning Champion:** Completed 50+ activities")
+        elif total_activities >= 25:
+            achievements.append("🎖️ **Dedicated Learner:** Completed 25+ activities")
+        elif total_activities >= 10:
+            achievements.append("⭐ **Active Student:** Completed 10+ activities")
+
+        if avg_score >= 90:
+            achievements.append("🌟 **Excellence Award:** Maintained 90%+ average")
+        elif avg_score >= 80:
+            achievements.append("🎯 **High Achiever:** Maintained 80%+ average")
+
+        for subject, subject_data in student_data["subjects"].items():
+            if subject_data["subject_stats"]["average_score"] >= 85:
+                achievements.append(f"📚 **{subject} Expert:** Mastery level performance")
+
+        improving_count = 0
+        for subject_data in student_data["subjects"].values():
+            for topic_data in subject_data["topics"].values():
+                if topic_data["improvement_trend"] == "improving":
+                    improving_count += 1
+
+        if improving_count >= 3:
+            achievements.append("📈 **Growth Mindset:** Multiple topics showing improvement")
+
+        if not achievements:
+            achievements.append("🌱 **Learning Journey Begun:** Keep up the great work!")
+
+        return "\n".join(achievements)
+
+    def recommend_focus_areas(self, student_data: dict) -> str:
+        """Recommend specific focus areas for continued learning"""
+        focus_areas = []
+
+        for subject, subject_data in student_data["subjects"].items():
+            avg_score = subject_data["subject_stats"]["average_score"]
+            if avg_score < 75:
+                focus_areas.append(f"• **{subject}:** Strengthen foundational concepts")
+
+        declining_topics = []
+        for subject, subject_data in student_data["subjects"].items():
+            for topic, topic_data in subject_data["topics"].items():
+                if topic_data["improvement_trend"] == "declining":
+                    declining_topics.append(f"{topic} ({subject})")
+
+        if declining_topics:
+            focus_areas.append(f"• **Review Priority:** {', '.join(declining_topics[:2])}")
+
+        focus_areas.append("• **Regular Practice:** Maintain consistent study schedule")
+        focus_areas.append("• **Challenging Content:** Gradually increase difficulty level")
+
+        return "\n".join(focus_areas)
+
+class EduTutorApp:
+    def __init__(self):
+        self.ai_tutor = EduTutorAI()
+        self.features = EducationalFeatures(self.ai_tutor)
+        self.current_quiz_session = None
+
+    def initialize_app(self):
+        """Initialize the application and load the AI model"""
+        print("🚀 Initializing EduTutor AI Application...")
+
+        model_loaded = self.ai_tutor.load_model()
+
+        if model_loaded:
+            print("✅ EduTutor AI is ready!")
+            return True
+        else:
+            print("❌ Failed to load AI model. Some features may not work properly.")
+            return False
+
+    def create_gradio_interface(self):
+        """Create the Gradio interface for the application with updated styling"""
+
+        def chat_interface(message, subject, difficulty, history):
+            if not message.strip():
+                return history, history, ""
+
+            response = self.ai_tutor.generate_response(message, subject, difficulty)
+            history.append([message, response])
+
+            return history, history, ""
+
+        def create_quiz_interface(topic, subject, num_questions):
+            if not topic.strip():
+                return "Please enter a topic for the quiz.", ""
+
+            quiz_content, session_id = self.features.create_quiz(topic, subject, int(num_questions))
+            self.current_quiz_session = session_id
+            return quiz_content, session_id
+
+        def submit_quiz_interface(session_id, q1, q2, q3, q4, q5, student_name):
+            if not session_id:
+                return "No active quiz session. Please create a quiz first."
+
+            answers = {
+                "q1": q1, "q2": q2, "q3": q3, "q4": q4, "q5": q5
+            }
+
+            answers = {k: v for k, v in answers.items() if v}
+
+            return self.features.submit_quiz(session_id, answers, student_name)
+
+        def homework_analyzer_interface(homework_text, subject):
+            if not homework_text.strip():
+                return "Please enter your homework for analysis."
+
+            return self.features.homework_analyzer.analyze_homework_comprehensive(homework_text, subject)
+
+        def study_plan_interface(topic, subject, duration):
+            if not topic.strip():
+                return "Please enter a topic for the study plan."
+
+            return self.features.create_study_plan(topic, subject, duration)
+
+        def track_progress_interface(student_name, subject, topic, score, activity):
+            if not all([student_name.strip(), subject, topic.strip(), activity.strip()]):
+                return "Please fill in all fields to track progress."
+
+            try:
+                score_float = float(score)
+                if not 0 <= score_float <= 100:
+                    return "Score must be between 0 and 100."
+
+                return self.features.track_progress(student_name, subject, topic, score_float, activity)
+            except ValueError:
+                return "Please enter a valid numeric score."
+
+        def view_progress_interface(student_name):
+            if not student_name.strip():
+                return "Please enter a student name to view progress."
+
+            return self.features.view_progress(student_name)
+
+        # Custom CSS for styling
+        custom_css = """
+        .gradio-container {
+            font-family: 'Segoe UI', 'Roboto', 'Helvetica Neue', Arial, sans-serif !important;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            min-height: 100vh;
+        }
+        
+        .main-header {
+            background: rgba(255, 255, 255, 0.95) !important;
+            backdrop-filter: blur(10px) !important;
+            border-radius: 20px !important;
+            padding: 30px !important;
+            margin: 20px !important;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1) !important;
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        }
+        
+        .main-header h1 {
+            background: linear-gradient(45deg, #667eea, #764ba2) !important;
+            -webkit-background-clip: text !important;
+            -webkit-text-fill-color: transparent !important;
+            font-size: 3.5rem !important;
+            font-weight: 800 !important;
+            text-align: center !important;
+            margin-bottom: 15px !important;
+            font-family: 'Inter', 'Segoe UI', sans-serif !important;
+        }
+        
+        .main-header p {
+            color: #4a5568 !important;
+            font-size: 1.3rem !important;
+            text-align: center !important;
+            font-weight: 500 !important;
+            margin-bottom: 0 !important;
+        }
+        
+        .tab-nav {
+            background: rgba(255, 255, 255, 0.9) !important;
+            border-radius: 15px !important;
+            padding: 10px !important;
+            margin: 10px !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1) !important;
+        }
+        
+        .tab-nav button {
+            background: linear-gradient(45deg, #667eea, #764ba2) !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 10px !important;
+            padding: 15px 25px !important;
+            font-weight: 600 !important;
+            font-size: 1.1rem !important;
+            margin: 5px !important;
+            transition: all 0.3s ease !important;
+        }
+        
+        .tab-nav button:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3) !important;
+        }
+        
+        .tab-nav button.selected {
+            background: linear-gradient(45deg, #764ba2, #667eea) !important;
+            box-shadow: 0 8px 16px rgba(118, 75, 162, 0.4) !important;
+        }
+        
+        .content-container {
+            background: rgba(255, 255, 255, 0.95) !important;
+            border-radius: 20px !important;
+            padding: 30px !important;
+            margin: 20px !important;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1) !important;
+            backdrop-filter: blur(10px) !important;
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        }
+        
+        .section-header {
+            color: #2d3748 !important;
+            font-size: 2.2rem !important;
+            font-weight: 700 !important;
+            margin-bottom: 20px !important;
+            text-align: center !important;
+            font-family: 'Inter', 'Segoe UI', sans-serif !important;
+        }
+        
+        .section-subheader {
+            color: #4a5568 !important;
+            font-size: 1.1rem !important;
+            font-weight: 500 !important;
+            text-align: center !important;
+            margin-bottom: 30px !important;
+        }
+        
+        .input-group {
+            background: rgba(247, 250, 252, 0.8) !important;
+            border-radius: 15px !important;
+            padding: 20px !important;
+            margin: 15px 0 !important;
+            border: 2px solid rgba(102, 126, 234, 0.1) !important;
+        }
+        
+        .input-group label {
+            color: #2d3748 !important;
+            font-weight: 600 !important;
+            font-size: 1.1rem !important;
+            margin-bottom: 8px !important;
+        }
+        
+        .input-group input, .input-group textarea, .input-group select {
+            border: 2px solid rgba(102, 126, 234, 0.2) !important;
+            border-radius: 10px !important;
+            padding: 12px 16px !important;
+            font-size: 1rem !important;
+            transition: all 0.3s ease !important;
+            background: white !important;
+        }
+        
+        .input-group input:focus, .input-group textarea:focus, .input-group select:focus {
+            border-color: #667eea !important;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1) !important;
+            outline: none !important;
+        }
+        
+        .primary-button {
+            background: linear-gradient(45deg, #667eea, #764ba2) !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 12px !important;
+            padding: 15px 30px !important;
+            font-size: 1.1rem !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            transition: all 0.3s ease !important;
+            box-shadow: 0 8px 16px rgba(102, 126, 234, 0.3) !important;
+        }
+        
+        .primary-button:hover {
+            transform: translateY(-2px) !important;
+            box-shadow: 0 12px 24px rgba(102, 126, 234, 0.4) !important;
+        }
+        
+        .secondary-button {
+            background: linear-gradient(45deg, #718096, #4a5568) !important;
+            color: white !important;
+            border: none !important;
+            border-radius: 12px !important;
+            padding: 12px 24px !important;
+            font-size: 1rem !important;
+            font-weight: 600 !important;
+            cursor: pointer !important;
+            transition: all 0.3s ease !important;
+        }
+        
+        .secondary-button:hover {
+            transform: translateY(-1px) !important;
+            box-shadow: 0 8px 16px rgba(113, 128, 150, 0.3) !important;
+        }
+        
+        .output-container {
+            background: rgba(247, 250, 252, 0.9) !important;
+            border-radius: 15px !important;
+            padding: 25px !important;
+            margin: 20px 0 !important;
+            border: 2px solid rgba(102, 126, 234, 0.1) !important;
+            min-height: 200px !important;
+        }
+        
+        .chatbot-container {
+            border-radius: 15px !important;
+            border: 2px solid rgba(102, 126, 234, 0.2) !important;
+            background: white !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1) !important;
+        }
+        
+        .footer-info {
+            background: rgba(255, 255, 255, 0.9) !important;
+            border-radius: 15px !important;
+            padding: 25px !important;
+            margin: 20px !important;
+            text-align: center !important;
+            color: #4a5568 !important;
+            font-size: 1.1rem !important;
+            line-height: 1.6 !important;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.1) !important;
+        }
+        
+        .footer-info h2 {
+            color: #2d3748 !important;
+            font-size: 2rem !important;
+            font-weight: 700 !important;
+            margin-bottom: 15px !important;
+        }
+        """
+
+        with gr.Blocks(title="🎓 EduTutor AI - Advanced Learning Platform", css=custom_css, theme=gr.themes.Soft()) as app:
+            
+            # Main Header
+            with gr.Row(elem_classes="main-header"):
+                gr.HTML("""
+                <div style="text-align: center;">
+                    <h1>🎓 EduTutor AI</h1>
+                    <p><strong>Your Advanced AI-Powered Learning Companion</strong></p>
+                    <p>Experience personalized education with cutting-edge artificial intelligence</p>
+                </div>
+                """)
+
+            with gr.Tabs(elem_classes="tab-nav"):
+                with gr.TabItem("🤖 AI Chat Tutor", elem_classes="content-container"):
+                    gr.HTML('<h2 class="section-header">💬 Interactive AI Tutor</h2>')
+                    gr.HTML('<p class="section-subheader">Get instant, personalized help with any academic question</p>')
+
+                    with gr.Row():
+                        with gr.Column(scale=3, elem_classes="input-group"):
+                            chat_subject = gr.Dropdown(
+                                choices=["Mathematics", "Physics", "Chemistry", "Biology", "General"],
+                                value="Mathematics",
+                                label="📚 Subject Area"
+                            )
+                        with gr.Column(scale=3, elem_classes="input-group"):
+                            chat_difficulty = gr.Dropdown(
+                                choices=["Beginner", "Intermediate", "Advanced"],
+                                value="Intermediate",
+                                label="🎯 Difficulty Level"
+                            )
+
+                    chatbot = gr.Chatbot(
+                        label="💬 AI Tutor Conversation",
+                        height=450,
+                        show_label=True,
+                        elem_classes="chatbot-container"
+                    )
+
+                    with gr.Row():
+                        chat_input = gr.Textbox(
+                            placeholder="Ask any academic question... (e.g., 'Solve 2x + 5 = 15', 'What is photosynthesis?', 'Explain Newton's laws')",
+                            label="✍️ Your Question",
+                            lines=2,
+                            elem_classes="input-group"
+                        )
+
+                    with gr.Row():
+                        chat_submit = gr.Button("🚀 Ask AI Tutor", variant="primary", size="lg", elem_classes="primary-button")
+                        chat_clear = gr.Button("🗑️ Clear Chat", size="lg", elem_classes="secondary-button")
+
+                    chat_history = gr.State([])
+
+                    chat_submit.click(
+                        chat_interface,
+                        inputs=[chat_input, chat_subject, chat_difficulty, chat_history],
+                        outputs=[chatbot, chat_history, chat_input]
+                    )
+
+                    chat_input.submit(
+                        chat_interface,
+                        inputs=[chat_input, chat_subject, chat_difficulty, chat_history],
+                        outputs=[chatbot, chat_history, chat_input]
+                    )
+
+                    chat_clear.click(
+                        lambda: ([], []),
+                        outputs=[chatbot, chat_history]
+                    )
+
+                with gr.TabItem("📊 Advanced Homework Analyzer", elem_classes="content-container"):
+                    gr.HTML('<h2 class="section-header">🔍 Comprehensive Homework Analysis</h2>')
+                    gr.HTML('<p class="section-subheader">Get detailed solutions and explanations for your assignments</p>')
+
+                    with gr.Row():
+                        homework_subject = gr.Dropdown(
+                            choices=["Mathematics", "Physics", "Chemistry", "Biology"],
+                            value="Mathematics",
+                            label="📚 Subject Area",
+                            elem_classes="input-group"
+                        )
+
+                    homework_input = gr.Textbox(
+                        placeholder="Paste your homework here... (e.g., '1. Solve 2x + 5 = 15  2. Find x when 3x - 7 = 20')",
+                        label="📝 Homework Assignment",
+                        lines=8,
+                        elem_classes="input-group"
+                    )
+
+                    homework_submit = gr.Button("🔍 Analyze Homework", variant="primary", size="lg", elem_classes="primary-button")
+
+                    homework_output = gr.Markdown(
+                        label="📊 Comprehensive Analysis",
+                        value="Upload your homework above and click 'Analyze Homework' to get detailed solutions and explanations.",
+                        elem_classes="output-container"
+                    )
+
+                    homework_submit.click(
+                        homework_analyzer_interface,
+                        inputs=[homework_input, homework_subject],
+                        outputs=homework_output
+                    )
+
+                with gr.TabItem("📝 Interactive Quiz", elem_classes="content-container"):
+                    gr.HTML('<h2 class="section-header">🧠 Test Your Knowledge</h2>')
+                    gr.HTML('<p class="section-subheader">Challenge yourself with personalized quizzes</p>')
+
+                    with gr.Row():
+                        with gr.Column(elem_classes="input-group"):
+                            quiz_topic = gr.Textbox(
+                                placeholder="e.g., Algebra, Photosynthesis, Newton's Laws",
+                                label="📚 Quiz Topic"
+                            )
+                        with gr.Column(elem_classes="input-group"):
+                            quiz_subject = gr.Dropdown(
+                                choices=["Mathematics", "Physics", "Chemistry", "Biology"],
+                                value="Mathematics",
+                                label="🎯 Subject Area"
+                            )
+                        with gr.Column(elem_classes="input-group"):
+                            quiz_num_questions = gr.Dropdown(
+                                choices=["3", "5", "7", "10"],
+                                value="5",
+                                label="❓ Number of Questions"
+                            )
+
+                    create_quiz_btn = gr.Button("📝 Create Quiz", variant="primary", size="lg", elem_classes="primary-button")
+
+                    quiz_display = gr.Markdown(
+                        label="📝 Quiz Questions",
+                        value="Click 'Create Quiz' to generate questions on your chosen topic.",
+                        elem_classes="output-container"
+                    )
+
+                    quiz_session_id = gr.Textbox(visible=False)
+
+                    gr.HTML('<h3 style="color: #2d3748; font-size: 1.5rem; font-weight: 600; margin: 20px 0;">✍️ Your Answers</h3>')
+
+                    with gr.Row():
+                        with gr.Column(elem_classes="input-group"):
+                            q1_answer = gr.Radio(choices=["A", "B", "C", "D"], label="Question 1")
+                            q2_answer = gr.Radio(choices=["A", "B", "C", "D"], label="Question 2")
+                            q3_answer = gr.Radio(choices=["A", "B", "C", "D"], label="Question 3")
+                        with gr.Column(elem_classes="input-group"):
+                            q4_answer = gr.Radio(choices=["A", "B", "C", "D"], label="Question 4")
+                            q5_answer = gr.Radio(choices=["A", "B", "C", "D"], label="Question 5")
+                            quiz_student_name = gr.Textbox(
+                                placeholder="Enter your name (optional)",
+                                label="👤 Student Name"
+                            )
+
+                    submit_quiz_btn = gr.Button("📊 Submit Quiz", variant="secondary", size="lg", elem_classes="secondary-button")
+
+                    quiz_results = gr.Markdown(
+                        label="📊 Quiz Results",
+                        value="Complete the quiz above and click 'Submit Quiz' to see your results.",
+                        elem_classes="output-container"
+                    )
+
+                    create_quiz_btn.click(
+                        create_quiz_interface,
+                        inputs=[quiz_topic, quiz_subject, quiz_num_questions],
+                        outputs=[quiz_display, quiz_session_id]
+                    )
+
+                    submit_quiz_btn.click(
+                        submit_quiz_interface,
+                        inputs=[quiz_session_id, q1_answer, q2_answer, q3_answer, q4_answer, q5_answer, quiz_student_name],
+                        outputs=quiz_results
+                    )
+
+                with gr.TabItem("📋 Study Plan Generator", elem_classes="content-container"):
+                    gr.HTML('<h2 class="section-header">🎯 Personalized Study Plans</h2>')
+                    gr.HTML('<p class="section-subheader">Create customized learning roadmaps for academic success</p>')
+
+                    with gr.Row():
+                        with gr.Column(elem_classes="input-group"):
+                            plan_topic = gr.Textbox(
+                                placeholder="e.g., Linear Equations, Organic Chemistry, Cell Biology",
+                                label="📚 Study Topic"
+                            )
+                        with gr.Column(elem_classes="input-group"):
+                            plan_subject = gr.Dropdown(
+                                choices=["Mathematics", "Physics", "Chemistry", "Biology"],
+                                value="Mathematics",
+                                label="🎯 Subject Area"
+                            )
+                        with gr.Column(elem_classes="input-group"):
+                            plan_duration = gr.Dropdown(
+                                choices=["1 week", "2 weeks", "1 month", "2 months"],
+                                value="2 weeks",
+                                label="⏰ Study Duration"
+                            )
+
+                    create_plan_btn = gr.Button("📋 Generate Study Plan", variant="primary", size="lg", elem_classes="primary-button")
+
+                    study_plan_output = gr.Markdown(
+                        label="📋 Your Personalized Study Plan",
+                        value="Enter a topic above and click 'Generate Study Plan' to create your personalized learning roadmap.",
+                        elem_classes="output-container"
+                    )
+
+                    create_plan_btn.click(
+                        study_plan_interface,
+                        inputs=[plan_topic, plan_subject, plan_duration],
+                        outputs=study_plan_output
+                    )
+
+                with gr.TabItem("📈 Progress Tracking", elem_classes="content-container"):
+                    gr.HTML('<h2 class="section-header">📊 Track Your Learning Journey</h2>')
+                    gr.HTML('<p class="section-subheader">Monitor your academic progress and achievements</p>')
+
+                    with gr.Tabs():
+                        with gr.TabItem("➕ Add Progress"):
+                            gr.HTML('<h3 style="color: #2d3748; font-size: 1.5rem; font-weight: 600; margin: 20px 0;">📝 Record New Activity</h3>')
+
+                            with gr.Row():
+                                with gr.Column(elem_classes="input-group"):
+                                    progress_student = gr.Textbox(
+                                        placeholder="Enter student name",
+                                        label="👤 Student Name"
+                                    )
+                                    progress_subject = gr.Dropdown(
+                                        choices=["Mathematics", "Physics", "Chemistry", "Biology"],
+                                        value="Mathematics",
+                                        label="📚 Subject Area"
+                                    )
+                                with gr.Column(elem_classes="input-group"):
+                                    progress_topic = gr.Textbox(
+                                        placeholder="e.g., Linear Equations, Photosynthesis",
+                                        label="📖 Topic"
+                                    )
+                                    progress_score = gr.Number(
+                                        value=85,
+                                        minimum=0,
+                                        maximum=100,
+                                        label="📊 Score (%)"
+                                    )
+                                with gr.Column(elem_classes="input-group"):
+                                    progress_activity = gr.Textbox(
+                                        placeholder="e.g., Quiz completed, Homework submitted",
+                                        label="📝 Activity Description"
+                                    )
+
+                            add_progress_btn = gr.Button("➕ Add Progress", variant="primary", size="lg", elem_classes="primary-button")
+
+                            progress_add_output = gr.Markdown(
+                                label="✅ Progress Update",
+                                value="Fill in the details above and click 'Add Progress' to record your activity.",
+                                elem_classes="output-container"
+                            )
+
+                            add_progress_btn.click(
+                                track_progress_interface,
+                                inputs=[progress_student, progress_subject, progress_topic, progress_score, progress_activity],
+                                outputs=progress_add_output
+                            )
+
+                        with gr.TabItem("📊 View Progress"):
+                            gr.HTML('<h3 style="color: #2d3748; font-size: 1.5rem; font-weight: 600; margin: 20px 0;">📈 Comprehensive Progress Report</h3>')
+
+                            view_progress_student = gr.Textbox(
+                                placeholder="Enter student name to view progress",
+                                label="👤 Student Name",
+                                elem_classes="input-group"
+                            )
+
+                            view_progress_btn = gr.Button("📊 Generate Progress Report", variant="primary", size="lg", elem_classes="primary-button")
+
+                            progress_report_output = gr.Markdown(
+                                label="📈 Detailed Progress Report",
+                                value="Enter a student name above and click 'Generate Progress Report' to view comprehensive learning analytics.",
+                                elem_classes="output-container"
+                            )
+
+                            view_progress_btn.click(
+                                view_progress_interface,
+                                inputs=view_progress_student,
+                                outputs=progress_report_output
+                            )
+
+            # Footer
+            with gr.Row(elem_classes="footer-info"):
+                gr.HTML("""
+                <div>
+                    <h2>🎓 About EduTutor AI</h2>
+                    <p>EduTutor AI is powered by advanced artificial intelligence and designed to provide personalized, accurate, and comprehensive educational support. Our platform combines the latest in AI technology with proven educational methodologies to help students achieve their learning goals.</p>
+                    <p><strong>Features:</strong> AI Chat Tutor • Advanced Homework Analyzer • Interactive Quizzes • Study Plan Generator • Progress Tracking</p>
+                </div>
+                """)
+
+        return app
+
+def main():
+    """Main function to run the EduTutor AI application"""
+    print("🎓 Starting EduTutor AI Application...")
+
+    app_instance = EduTutorApp()
+
+    model_ready = app_instance.initialize_app()
+
+    if not model_ready:
+        print("⚠️ Warning: AI model failed to load. Some features may not work optimally.")
+        print("🔄 The application will still run with fallback responses.")
+
+    print("🌐 Creating web interface...")
+    gradio_app = app_instance.create_gradio_interface()
+
+    print(f"🚀 Launching EduTutor AI on port 7860...")
+    print("🌟 EduTutor AI is now ready!")
+    print("💡 Features available:")
+    print("   • 🤖 AI Chat Tutor - Get instant answers to academic questions")
+    print("   • 📊 Advanced Homework Analyzer - Comprehensive homework solutions")
+    print("   • 📝 Interactive Quizzes - Test your knowledge")
+    print("   • 📋 Study Plan Generator - Personalized learning roadmaps")
+    print("   • 📈 Progress Tracking - Monitor your learning journey")
+
+    gradio_app.launch(
+        server_port=7860,
+        server_name="0.0.0.0",
+        share=True,
+        show_error=True,
+        quiet=False
+    )
+
+if __name__ == "__main__":
+    main()
